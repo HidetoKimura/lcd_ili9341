@@ -59,6 +59,11 @@ struct ili9341
         struct spi_device *spi;
         struct ili9341_fbinfo info;
         struct miscdevice misc_device;
+        struct {
+		struct gpio_desc *reset;
+		struct gpio_desc *dc;
+		struct gpio_desc *led;
+        } gpio;
 };
 
 static int rotate = 270;
@@ -112,8 +117,9 @@ int ili9341_write_spi_1_byte(struct ili9341 *item, unsigned char byte)
         return spi_sync(item->spi, &m);
 }
 
-static void __init ili9341_init_gpio(struct ili9341 *item)
+static void ili9341_init_gpio(struct ili9341 *item)
 {
+        #if 0
         // DC high - data, DC low - command
         gpio_request_one(ILI_GPIO_DC, GPIOF_OUT_INIT_HIGH, "dc");
 
@@ -125,6 +131,31 @@ static void __init ili9341_init_gpio(struct ili9341 *item)
         mdelay(10);
 
         gpio_set_value(ILI_GPIO_RESET, 1);
+        #endif
+
+	item->gpio.reset = devm_gpiod_get_index_optional(item->dev, "reset", 0, GPIOD_OUT_HIGH);
+        if(IS_ERR(item->gpio.reset))
+        {
+                dev_err(item->dev, "Failed to get reset gpio\n");
+                return;
+        }
+	item->gpio.dc = devm_gpiod_get_index_optional(item->dev, "dc", 0, GPIOD_OUT_HIGH);
+        if(IS_ERR(item->gpio.dc))
+        {
+                dev_err(item->dev, "Failed to get dc gpio\n");
+                return;
+        }
+	item->gpio.led = devm_gpiod_get_index_optional(item->dev, "led", 0, GPIOD_OUT_HIGH);
+        if(IS_ERR(item->gpio.led))
+        {
+                dev_err(item->dev, "Failed to get led gpio\n");
+                return;
+        }
+        gpiod_set_value(item->gpio.reset, 0);
+
+        mdelay(10);
+
+        gpiod_set_value(item->gpio.reset, 1);
 
         return;
 }
@@ -140,9 +171,11 @@ static void ili9341_write_data(struct ili9341 *item, unsigned char dc, unsigned 
 
         if (dc == ILI_COMMAND)
         {
-                gpio_set_value(ILI_GPIO_DC, 0);
+//                gpio_set_value(ILI_GPIO_DC, 0);
+                gpiod_set_value(item->gpio.dc, 0);
                 ili9341_write_spi_1_byte(item, value);
-                gpio_set_value(ILI_GPIO_DC, 1);
+//                gpio_set_value(ILI_GPIO_DC, 1);
+                gpiod_set_value(item->gpio.dc, 1);
         }
         else
         {       // ILI_DATA
@@ -644,7 +677,7 @@ static int ili9341_probe(struct spi_device *spi)
         {
                 dev_err(dev,
                         "%s: unable to ili9341_video_alloc\n", __func__);
-                goto out_info;
+                goto out;
         }
 
         item->misc_device.name = DEV_NAME;
@@ -681,8 +714,6 @@ static int ili9341_probe(struct spi_device *spi)
 
 out_video:
         ili9341_video_free(item);
-out_info:
-        kfree(item);
 out:
         return ret;
 }
@@ -693,9 +724,8 @@ static void ili9341_remove(struct spi_device *spi)
         if (item)
         {
                 ili9341_video_free(item);
-                kfree(item);
         }
-        ili9341_free_gpio();
+//      ili9341_free_gpio();
 
         misc_deregister(&item->misc_device);
 
