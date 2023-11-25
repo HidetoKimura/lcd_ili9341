@@ -25,6 +25,7 @@
 #define ILI_COMMAND     1
 #define ILI_DATA        0
 #define CONSOLE_BUF_SIZE 512
+#define ZOOM_MAX        5
 
 #define CHAR_COORD(a)  (a * 8)
 
@@ -64,6 +65,7 @@ struct ili9341 {
         int     end_col;
         int     start_line;
         int     end_line;
+        int     zoom;
         u8      console_buf[CONSOLE_BUF_SIZE];
 };
 
@@ -506,7 +508,7 @@ static void set_pixel_to_image(pos_t* pos, color_t* color, image_t* image)
         return;
 }
 
-static void ili9341_draw_bitmap(struct ili9341 *item, const bitmap_t *bitmap, int zoom)
+static void ili9341_draw_bitmap(struct ili9341 *item, const bitmap_t *bitmap)
 {
         u16* data;
         int  x, y, cx, cy, size, offset;
@@ -514,7 +516,7 @@ static void ili9341_draw_bitmap(struct ili9341 *item, const bitmap_t *bitmap, in
         pos_t    pos;
         image_t  image;
 
-        size = (bitmap->width * zoom ) * (bitmap->height * zoom) * item->info.var.color_depth;
+        size = (bitmap->width * item->zoom ) * (bitmap->height * item->zoom) * item->info.var.color_depth;
         data = (u16*)vmalloc(size);
         if (!data) {
                 dev_err(item->dev, "Failed to allocate memory\n");
@@ -522,15 +524,15 @@ static void ili9341_draw_bitmap(struct ili9341 *item, const bitmap_t *bitmap, in
         }
         memset(data, 0, size);
 
-        image.width = bitmap->width * zoom;
-        image.height = bitmap->height * zoom;
+        image.width = bitmap->width * item->zoom;
+        image.height = bitmap->height * item->zoom;
         image.color_depth = item->info.var.color_depth;
         image.data = data;
 
         for (y = 0; y < image.height ; y++) {
                 for (x = 0; x < image.width; x++) {
-                        cx = x / zoom;
-                        cy = y / zoom;
+                        cx = x / item->zoom;
+                        cy = y / item->zoom;
                         offset = bitmap->data[cy * bitmap->width + cx];
                         color = bitmap->color_table[offset];
                         pos.x = x;
@@ -558,7 +560,7 @@ static void ili9341_draw_bitmap(struct ili9341 *item, const bitmap_t *bitmap, in
         return;
 }
 
-static void ili9341_puts(struct ili9341 *item, u8 *str, int zoom)
+static void ili9341_puts(struct ili9341 *item, u8 *str)
 {
         uint8_t font_data[FONT_HEIGHT];
         uint8_t tmp;
@@ -573,8 +575,8 @@ static void ili9341_puts(struct ili9341 *item, u8 *str, int zoom)
         u16*     data;
 
 
-        char_width  = FONT_WIDTH * zoom ;
-        char_height = FONT_HEIGHT * zoom ;
+        char_width  = FONT_WIDTH * item->zoom ;
+        char_height = FONT_HEIGHT * item->zoom ;
 
         size = char_width * char_height * item->info.var.color_depth;
         data = (u16*)vmalloc(size);
@@ -597,11 +599,11 @@ static void ili9341_puts(struct ili9341 *item, u8 *str, int zoom)
                 if(*str < 0x7f) {
                         han = true;
                         font_width = FONT_WIDTH / 2;
-                        char_width = font_width * zoom;
+                        char_width = font_width * item->zoom;
                 } else {
                         han = false;
                         font_width = FONT_WIDTH;
-                        char_width = font_width * zoom;
+                        char_width = font_width * item->zoom;
                 }
                 tok = ezfont_get_fontdata_by_utf8(str, false, font_data, sizeof(font_data));
                 if (tok == NULL)
@@ -616,8 +618,8 @@ static void ili9341_puts(struct ili9341 *item, u8 *str, int zoom)
 
                 for (y = 0; y < char_height; y++) {
                         for (x = 0; x < char_width; x++) {
-                                cx = x / zoom;
-                                cy = y / zoom;
+                                cx = x / item->zoom;
+                                cy = y / item->zoom;
                                 if (han) {
                                         tmp = font_data[cy] & 0xf0;
                                         tmp >>= 4;
@@ -693,123 +695,135 @@ static void ili9341_set_cursor(struct ili9341 *item, int x, int y)
         return;
 }
 
+static void ili9341_set_zoom(struct ili9341 *item, int zoom)
+{
+        if( item->zoom >= 1 && item->zoom < ZOOM_MAX) {
+                item->zoom = zoom;
+        } else {
+                item->zoom  = 1;
+        } 
+
+        return;
+}
+
 static void ili9341_draw_opening(struct ili9341 *item)
 {
         int i,j;
 
         ili9341_fill_screen(item, (color_t*)&black);
 
+        ili9341_set_zoom(item, 1);
+
         // 1st character
         ili9341_set_cursor(item, CHAR_COORD(2), CHAR_COORD(1));
 
-        ili9341_draw_bitmap(item, &corner_lt, 1);
+        ili9341_draw_bitmap(item, &corner_lt);
         for (i = 0; i < 8; i++) {
-                ili9341_draw_bitmap(item, &h_line, 1);
+                ili9341_draw_bitmap(item, &h_line);
         }
-        ili9341_draw_bitmap(item, &corner_rt, 1);
-        ili9341_puts(item, "\n", 1);
+        ili9341_draw_bitmap(item, &corner_rt);
+        ili9341_puts(item, "\n");
 
         for(j = 0; j < 5; j++) {
-                ili9341_draw_bitmap(item, &v_line, 1);
+                ili9341_draw_bitmap(item, &v_line);
                 for (i = 0; i < 8; i++) {
-                        ili9341_puts(item, "　", 1);
+                        ili9341_puts(item, "　");
                 }
-                ili9341_draw_bitmap(item, &v_line, 1);
-                ili9341_puts(item, "\n", 1);
+                ili9341_draw_bitmap(item, &v_line);
+                ili9341_puts(item, "\n");
         }
 
-        ili9341_draw_bitmap(item, &corner_lb, 1);
+        ili9341_draw_bitmap(item, &corner_lb);
         for (i = 0; i < 8; i++) {
-                ili9341_draw_bitmap(item, &h_line, 1);
+                ili9341_draw_bitmap(item, &h_line);
         }
-        ili9341_draw_bitmap(item, &corner_rb, 1);
-        ili9341_puts(item, "\n", 1);
+        ili9341_draw_bitmap(item, &corner_rb);
+        ili9341_puts(item, "\n");
 
         ili9341_set_cursor(item, CHAR_COORD(4),  CHAR_COORD(1));
-        ili9341_puts(item, "　りなくす　\n", 1);
+        ili9341_puts(item, "　りなくす　\n");
 
         ili9341_set_cursor(item, CHAR_COORD(4), CHAR_COORD(3));
-        ili9341_puts(item, "ＨＰ：９９９\n", 1);
-        ili9341_puts(item, "ＭＰ：９９９\n", 1);
-        ili9341_puts(item, "勇者：　９９\n", 1);
+        ili9341_puts(item, "ＨＰ：９９９\n");
+        ili9341_puts(item, "ＭＰ：９９９\n");
+        ili9341_puts(item, "勇者：　９９\n");
 
         // 2nd character
         ili9341_set_cursor(item, CHAR_COORD(12), CHAR_COORD(1));
 
-        ili9341_draw_bitmap(item, &corner_lt, 1);
+        ili9341_draw_bitmap(item, &corner_lt);
         for (i = 0; i < 8; i++) {
-                ili9341_draw_bitmap(item, &h_line, 1);
+                ili9341_draw_bitmap(item, &h_line);
         }
-        ili9341_draw_bitmap(item, &corner_rt, 1);
-        ili9341_puts(item, "\n", 1);
+        ili9341_draw_bitmap(item, &corner_rt);
+        ili9341_puts(item, "\n");
 
         for(j = 0; j < 5; j++) {
-                ili9341_draw_bitmap(item, &v_line, 1);
+                ili9341_draw_bitmap(item, &v_line);
                 for (i = 0; i < 8; i++) {
-                        ili9341_puts(item, "　", 1);
+                        ili9341_puts(item, "　");
                 }
-                ili9341_draw_bitmap(item, &v_line, 1);
-                ili9341_puts(item, "\n", 1);
+                ili9341_draw_bitmap(item, &v_line);
+                ili9341_puts(item, "\n");
         }
 
-        ili9341_draw_bitmap(item, &corner_lb, 1);
+        ili9341_draw_bitmap(item, &corner_lb);
         for (i = 0; i < 8; i++) {
-                ili9341_draw_bitmap(item, &h_line, 1);
+                ili9341_draw_bitmap(item, &h_line);
         }
-        ili9341_draw_bitmap(item, &corner_rb, 1);
-        ili9341_puts(item, "\n", 1);
+        ili9341_draw_bitmap(item, &corner_rb);
+        ili9341_puts(item, "\n");
 
         ili9341_set_cursor(item, CHAR_COORD(14),  CHAR_COORD(1));
 
-        ili9341_puts(item, "　マリベル　\n", 1);
+        ili9341_puts(item, "　マリベル　\n");
 
         ili9341_set_cursor(item, CHAR_COORD(14), CHAR_COORD(3));
 
-        ili9341_puts(item, "ＨＰ：　１０\n", 1);
-        ili9341_puts(item, "ＭＰ：　１０\n", 1);
-        ili9341_puts(item, "女王：　９９\n", 1);
+        ili9341_puts(item, "ＨＰ：　１０\n");
+        ili9341_puts(item, "ＭＰ：　１０\n");
+        ili9341_puts(item, "女王：　９９\n");
 
-        #if 0 // for debug
-        ili9341_puts(item, "Hello World!\n", 1);
-        ili9341_puts(item, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~\n", 1);
-        #endif
-
+        // Draw Enemy
+        ili9341_set_zoom(item, 2);
         ili9341_set_cursor(item, CHAR_COORD(20) - CHAR_COORD(6), CHAR_COORD(12));
         for (i = 0; i < 3; i++)
         {
-                ili9341_draw_bitmap(item, &slime, 2);
+                ili9341_draw_bitmap(item, &slime);
         }
 
+        // Draw Console
+        ili9341_set_zoom(item, 1);
         ili9341_set_cursor(item, CHAR_COORD(2), CHAR_COORD(18));
 
-        ili9341_draw_bitmap(item, &corner_lt, 1);
+        ili9341_draw_bitmap(item, &corner_lt);
         for (i = 0; i < 34; i++) {
-                ili9341_draw_bitmap(item, &h_line, 1);
+                ili9341_draw_bitmap(item, &h_line);
         }
-        ili9341_draw_bitmap(item, &corner_rt, 1);
-        ili9341_puts(item, "\n", 1);
+        ili9341_draw_bitmap(item, &corner_rt);
+        ili9341_puts(item, "\n");
 
         for(j = 0; j < 8; j++) {
-                ili9341_draw_bitmap(item, &v_line, 1);
+                ili9341_draw_bitmap(item, &v_line);
                 for (i = 0; i < 34; i++) {
-                        ili9341_puts(item, "　", 1);
+                        ili9341_puts(item, "　");
                 }
-                ili9341_draw_bitmap(item, &v_line, 1);
-                ili9341_puts(item, "\n", 1);
+                ili9341_draw_bitmap(item, &v_line);
+                ili9341_puts(item, "\n");
         }
 
-        ili9341_draw_bitmap(item, &corner_lb, 1);
+        ili9341_draw_bitmap(item, &corner_lb);
         for (i = 0; i < 34; i++) {
-                ili9341_draw_bitmap(item, &h_line, 1);
+                ili9341_draw_bitmap(item, &h_line);
         }
-        ili9341_draw_bitmap(item, &corner_rb, 1);
-        ili9341_puts(item, "\n", 1);
+        ili9341_draw_bitmap(item, &corner_rb);
+        ili9341_puts(item, "\n");
 
         ili9341_set_cursor(item, CHAR_COORD(4), CHAR_COORD(20));
         ili9341_set_limit(item,  CHAR_COORD(4), CHAR_COORD(36), CHAR_COORD(20), CHAR_COORD(26));
 
-        ili9341_puts(item, "スライムがあらわれた！\n\n", 1);
-        ili9341_puts(item, "＊「プルプルッ！ぼく、 悪いスライムじゃないよ」\n", 1);
+        ili9341_puts(item, "スライムがあらわれた！\n\n");
+        ili9341_puts(item, "＊「プルプルッ！ぼく、 悪いスライムじゃないよ」\n");
 
         ili9341_flush(item);
 }
@@ -821,9 +835,9 @@ static void ili9341_clear_console(struct ili9341 *item)
         ili9341_set_cursor(item, CHAR_COORD(3), CHAR_COORD(19));
         for(j = 0; j < 8; j++) {
                 for (i = 0; i < 34; i++) {
-                        ili9341_puts(item, "　", 1);
+                        ili9341_puts(item, "　");
                 }
-                ili9341_puts(item, "\n", 1);
+                ili9341_puts(item, "\n");
         }
         ili9341_set_cursor(item, CHAR_COORD(4), CHAR_COORD(20));
         ili9341_set_limit(item,  CHAR_COORD(4), CHAR_COORD(36), CHAR_COORD(20), CHAR_COORD(26));
@@ -832,8 +846,8 @@ static void ili9341_clear_console(struct ili9341 *item)
 static void ili9341_draw_ending(struct ili9341 *item)
 {
         ili9341_clear_console(item);
-        ili9341_puts(item, "りなくすはにげ出した！\n\n", 1);
-        ili9341_puts(item, "マリベル「遊んでくれて、ありがと。つまらなかったわ。\nじゃあね。」\n", 1);
+        ili9341_puts(item, "りなくすはにげ出した！\n\n");
+        ili9341_puts(item, "マリベル「遊んでくれて、ありがと。つまらなかったわ。\nじゃあね。」\n");
 
         ili9341_flush(item);
 
@@ -871,7 +885,7 @@ static ssize_t ili9341_write(struct file *file, const char __user *buff, size_t 
 
         item->console_buf[count - 1] = '\0';
         ili9341_clear_console(item);
-        ili9341_puts(item, item->console_buf, 1);
+        ili9341_puts(item, item->console_buf);
         ili9341_flush(item);
 
         return count;
