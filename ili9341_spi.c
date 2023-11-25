@@ -19,11 +19,12 @@
 #include "ezfont.h"
 #include "bitmap_data.h"
 
-#define DRV_NAME "ili9341_spi"
-#define DEV_NAME "ili9341_spi"
+#define DRV_NAME "lcd-ili9341"
+#define DEV_NAME "lcd-ili9341"
 
 #define ILI_COMMAND     1
 #define ILI_DATA        0
+#define CONSOLE_BUF_SIZE 512
 
 struct ili9341_fix_screeninfo {
         unsigned long smem_start; /* Start of frame buffer mem  */
@@ -56,8 +57,12 @@ struct ili9341 {
 		struct gpio_desc *dc;
 		struct gpio_desc *led;
         } gpio;
-        pos_t cursor;
-        int indent;
+        pos_t   cursor;
+        int     start_col;
+        int     end_col;
+        int     start_line;
+        int     end_line;
+        u8      console_buf[CONSOLE_BUF_SIZE];
 };
 
 static int rotate = 90;
@@ -532,13 +537,13 @@ static void ili9341_draw_bitmap(struct ili9341 *item, const bitmap_t *bitmap, in
                 }
         }
 
-        if (item->cursor.x + image.width > item->info.var.xres) {
-                item->cursor.x = item->indent;
+        if (item->cursor.x + image.width > item->end_col) {
+                item->cursor.x = item->start_col;
                 item->cursor.y += image.height;
         }
-        if (item->cursor.y + image.height > item->info.var.yres)
+        if (item->cursor.y + image.height > item->end_line)
         {
-                item->cursor.y = 0;
+                item->cursor.y = item->start_line;
         }
 
         pos.x = item->cursor.x;
@@ -576,10 +581,10 @@ static void ili9341_puts(struct ili9341 *item, u8 *str, int zoom)
                 if (*str == '\n') {
                         tok = ++str;
                         item->cursor.y += char_width;
-                        item->cursor.x = item->indent;
-                        if(item->cursor.y >= item->info.var.yres)
+                        item->cursor.x = item->start_col;
+                        if(item->cursor.y >= item->end_col)
                         {
-                                item->cursor.y = 0;
+                                item->cursor.y = item->start_line;
                         }
                         continue;
                 }
@@ -608,12 +613,12 @@ static void ili9341_puts(struct ili9341 *item, u8 *str, int zoom)
                 }
                 ili9341_blt_image(item, &item->cursor, &image);
                 item->cursor.x += char_width;
-                if (item->cursor.x >= item->info.var.xres) {
-                        item->cursor.x = item->indent;
+                if (item->cursor.x >= item->end_col) {
+                        item->cursor.x = item->start_col;
                         item->cursor.y += char_height;
-                        if(item->cursor.y >= item->info.var.yres)
+                        if(item->cursor.y >= item->end_line)
                         {
-                                item->cursor.y = 0;
+                                item->cursor.y = item->start_line;
                         }
                 }
         }
@@ -622,16 +627,48 @@ static void ili9341_puts(struct ili9341 *item, u8 *str, int zoom)
         return;
 }
 
-static void ili9341_set_cursor(struct ili9341 *item, int x, int y, int indent)
+static void ili9341_set_limit(struct ili9341 *item, int start_col, int end_col, int start_line, int end_line)
+{
+        if(start_col >= 0 && start_col < item->info.var.xres) {
+                item->start_col = start_col;
+        } else 
+        {
+                item->start_col = 0;
+        }
+        if(end_col >= 0 && end_col < item->info.var.xres) {
+                item->end_col = end_col;
+        } else 
+        {
+                item->end_col = item->info.var.xres;
+        }
+        if(start_line >= 0 && start_line < item->info.var.yres) {
+                item->start_line = start_line;
+        } else 
+        {
+                item->start_line = 0;
+        }
+        if(end_line >= 0 && end_line < item->info.var.yres) {
+                item->end_line = end_line;
+        } else 
+        {
+                item->end_line = item->info.var.yres;
+        }
+
+}
+
+static void ili9341_set_cursor(struct ili9341 *item, int x, int y)
 {
         if( x >= 0 && x < item->info.var.xres &&
             y >= 0 && y < item->info.var.yres) {
                 item->cursor.x = x;
                 item->cursor.y = y;
-                if (indent >= 0 && indent < item->info.var.xres ) {
-                        item->indent = indent;
-                }
-        }
+        } else {
+                item->cursor.x = 0;
+                item->cursor.y = 0;
+        } 
+
+        ili9341_set_limit(item, item->cursor.x, -1, item->cursor.y, -1);
+
         return;
 }
 
@@ -642,7 +679,7 @@ static void ili9341_draw_opening(struct ili9341 *item)
         ili9341_fill_screen(item, (color_t*)&black);
 
         // 1st character
-        ili9341_set_cursor(item, 16, 4, 16);
+        ili9341_set_cursor(item, 16, 4);
 
         ili9341_draw_bitmap(item, &corner_lt, 1);
         for (i = 0; i < 8; i++) {
@@ -667,16 +704,16 @@ static void ili9341_draw_opening(struct ili9341 *item)
         ili9341_draw_bitmap(item, &corner_rb, 1);
         ili9341_puts(item, "\n", 1);
 
-        ili9341_set_cursor(item, 32,  4, 32);
+        ili9341_set_cursor(item, 32,  4);
         ili9341_puts(item, "　りなくす　\n", 1);
 
-        ili9341_set_cursor(item, 32, 24, 32);
+        ili9341_set_cursor(item, 32, 24);
         ili9341_puts(item, "ＨＰ：９９９\n", 1);
         ili9341_puts(item, "ＭＰ：９９９\n", 1);
         ili9341_puts(item, "勇者：　９９\n", 1);
 
         // 2nd character
-        ili9341_set_cursor(item, 96 , 4, 96);
+        ili9341_set_cursor(item, 96, 4);
 
         ili9341_draw_bitmap(item, &corner_lt, 1);
         for (i = 0; i < 8; i++) {
@@ -701,10 +738,12 @@ static void ili9341_draw_opening(struct ili9341 *item)
         ili9341_draw_bitmap(item, &corner_rb, 1);
         ili9341_puts(item, "\n", 1);
 
-        ili9341_set_cursor(item, 96 + 16,  4, 96 + 16);
+        ili9341_set_cursor(item, 96 + 16,  4);
+
         ili9341_puts(item, "　マリベル　\n", 1);
 
-        ili9341_set_cursor(item, 96 + 16, 24, 96 + 16);
+        ili9341_set_cursor(item, 96 + 16, 24);
+
         ili9341_puts(item, "ＨＰ：　１０\n", 1);
         ili9341_puts(item, "ＭＰ：　１０\n", 1);
         ili9341_puts(item, "女王：　９９\n", 1);
@@ -714,15 +753,16 @@ static void ili9341_draw_opening(struct ili9341 *item)
         ili9341_puts(item, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~\n", 1);
         #endif
 
-        ili9341_set_cursor(item, 100, 100, -1);
+        ili9341_set_cursor(item, 100, 100);
         for (i = 0; i < 3; i++)
         {
                 ili9341_draw_bitmap(item, &slime, 2);
         }
 
-        ili9341_set_cursor(item, 16, 148, 16);
+        ili9341_set_cursor(item, 16, 148);
+
         ili9341_draw_bitmap(item, &corner_lt, 1);
-        for (i = 0; i < 32; i++) {
+        for (i = 0; i < 34; i++) {
                 ili9341_draw_bitmap(item, &h_line, 1);
         }
         ili9341_draw_bitmap(item, &corner_rt, 1);
@@ -730,7 +770,7 @@ static void ili9341_draw_opening(struct ili9341 *item)
 
         for(j = 0; j < 8; j++) {
                 ili9341_draw_bitmap(item, &v_line, 1);
-                for (i = 0; i < 32; i++) {
+                for (i = 0; i < 34; i++) {
                         ili9341_puts(item, " ", 1);
                 }
                 ili9341_draw_bitmap(item, &v_line, 1);
@@ -738,13 +778,15 @@ static void ili9341_draw_opening(struct ili9341 *item)
         }
 
         ili9341_draw_bitmap(item, &corner_lb, 1);
-        for (i = 0; i < 32; i++) {
+        for (i = 0; i < 34; i++) {
                 ili9341_draw_bitmap(item, &h_line, 1);
         }
         ili9341_draw_bitmap(item, &corner_rb, 1);
         ili9341_puts(item, "\n", 1);
 
-        ili9341_set_cursor(item, 32, 164, 32);
+        ili9341_set_cursor(item, 32, 164);
+        ili9341_set_limit(item,  32, 32 + 8 * 32, 164, 164 + 8 * 6);
+
         ili9341_puts(item, "スライムがあらわれた！\n\n", 1);
         ili9341_puts(item, "＊「プルプルッ！ぼく、 悪いスライムじゃないよ」\n", 1);
 
@@ -755,19 +797,20 @@ static void ili9341_clear_console(struct ili9341 *item)
 {
         int i, j;
 
-        ili9341_set_cursor(item, 16 + 8, 148 + 8, 16 + 8);
-        for(j = 0; j < 8; j++) {
+        ili9341_set_cursor(item, 32, 164);
+        for(j = 0; j < 6; j++) {
                 for (i = 0; i < 32; i++) {
                         ili9341_puts(item, " ", 1);
                 }
                 ili9341_puts(item, "\n", 1);
         }
+        ili9341_set_cursor(item, 32, 164);
+        ili9341_set_limit(item,  32, 32 + 8 * 32, 164, 164 + 8 * 6);
         return;
 }
 static void ili9341_draw_ending(struct ili9341 *item)
 {
         ili9341_clear_console(item);
-        ili9341_set_cursor(item, 32, 164, 32);
         ili9341_puts(item, "りなくすはにげ出した！\n\n", 1);
         ili9341_puts(item, "マリベル「遊んでくれて、ありがと。つまらなかったわ。\nじゃあね。」\n", 1);
 
@@ -784,14 +827,60 @@ static void ili9341_draw_ending(struct ili9341 *item)
 
 static ssize_t ili9341_write(struct file *file, const char __user *buff, size_t count, loff_t *ppos)
 {
+	struct ili9341 *item;
+
         pr_info("ili9341_write() is called.\n");
+
+	item = container_of(file->private_data,
+				  struct ili9341, misc_device);
+        if(!item) {
+                dev_err(item->dev,"Failed to get private data\n");
+                return -EFAULT;
+        }
+
+        if(count > sizeof(item->console_buf)) {
+                dev_err(item->dev,"Too large data\n");
+                return -EFAULT;
+        }
+        
+	if(copy_from_user(item->console_buf, buff, count)) {
+		pr_info("Bad copied value\n");
+		return -EFAULT;
+	}
+
+        item->console_buf[count - 1] = '\0';
+        ili9341_clear_console(item);
+        ili9341_puts(item, item->console_buf, 1);
+        ili9341_flush(item);
 
         return count;
 }
 
 static ssize_t ili9341_read(struct file *file, char __user *buff, size_t count, loff_t *ppos)
 {
+	struct ili9341 *item;
+
         pr_info("ili9341_read() is called.\n");
+
+	item = container_of(file->private_data,
+				  struct ili9341, misc_device);
+        if(!item) {
+                dev_err(item->dev,"Failed to get private data\n");
+                return -EFAULT;
+        }
+
+        if(count > sizeof(item->console_buf)) {
+                count = sizeof(item->console_buf);
+        }
+        
+	if(*ppos == 0){
+		if(copy_to_user(buff, item->console_buf, sizeof(item->console_buf))){
+                        dev_err(item->dev, "Bad copied value\n");
+			return -EFAULT;
+		}
+		*ppos+=1;
+		return sizeof(item->console_buf);
+	}
 
         return 0;
 }
