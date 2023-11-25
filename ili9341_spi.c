@@ -15,7 +15,7 @@
 #include <linux/gpio.h>
 #include <linux/spi/spi.h>
 #include <linux/miscdevice.h>
-
+#include "ili9341_spi.h"
 #include "ezfont.h"
 #include "bitmap_data.h"
 
@@ -25,36 +25,28 @@
 #define ILI_COMMAND     1
 #define ILI_DATA        0
 
-#define ILI_GPIO_DC     25
-#define ILI_GPIO_RESET  24
-
-struct ili9341_fix_screeninfo
-{
+struct ili9341_fix_screeninfo {
         unsigned long smem_start; /* Start of frame buffer mem  */
         u32 smem_len;             /* Length of frame buffer mem */
         u32 line_length;          /* length of a line in bytes  */
 };
 
-struct ili9341_var_screeninfo
-{
+struct ili9341_var_screeninfo {
         u32 xres;               /* visible resolution		*/
         u32 yres;
         u32 xres_virtual;       /* virtual resolution		*/
         u32 yres_virtual;
-        u32 bits_per_pixel;     /* guess what			*/
-        u32 grayscale;          /* 0 = color, 1 = grayscale,	*/
+        u32 color_depth;     
         u32 height;             /* height of picture in mm    */
         u32 width;              /* width of picture in mm     */
 };
 
-struct ili9341_fbinfo
-{
+struct ili9341_fbinfo {
         struct ili9341_fix_screeninfo fix;
         struct ili9341_var_screeninfo var;
 };
 
-struct ili9341
-{
+struct ili9341 {
         struct device *dev;
         struct spi_device *spi;
         struct ili9341_fbinfo info;
@@ -64,9 +56,11 @@ struct ili9341
 		struct gpio_desc *dc;
 		struct gpio_desc *led;
         } gpio;
+        pos_t cursor;
+        int indent;
 };
 
-static int rotate = 270;
+static int rotate = 90;
 static int mode_BGR = 1;
 
 static void ili9341_clear_graph(struct ili9341 *item);
@@ -119,19 +113,6 @@ int ili9341_write_spi_1_byte(struct ili9341 *item, unsigned char byte)
 
 static void ili9341_init_gpio(struct ili9341 *item)
 {
-        #if 0
-        // DC high - data, DC low - command
-        gpio_request_one(ILI_GPIO_DC, GPIOF_OUT_INIT_HIGH, "dc");
-
-        // Reset high - normal operation, Reset low - reset
-        gpio_request_one(ILI_GPIO_RESET, GPIOF_OUT_INIT_HIGH, "reset");
-
-        gpio_set_value(ILI_GPIO_RESET, 0);
-
-        mdelay(10);
-
-        gpio_set_value(ILI_GPIO_RESET, 1);
-        #endif
 
 	item->gpio.reset = devm_gpiod_get_index_optional(item->dev, "reset", 0, GPIOD_OUT_HIGH);
         if(IS_ERR(item->gpio.reset))
@@ -145,7 +126,7 @@ static void ili9341_init_gpio(struct ili9341 *item)
                 dev_err(item->dev, "Failed to get dc gpio\n");
                 return;
         }
-	item->gpio.led = devm_gpiod_get_index_optional(item->dev, "led", 0, GPIOD_OUT_HIGH);
+	item->gpio.led = devm_gpiod_get_index_optional(item->dev, "led", 0, GPIOD_OUT_LOW);
         if(IS_ERR(item->gpio.led))
         {
                 dev_err(item->dev, "Failed to get led gpio\n");
@@ -160,21 +141,13 @@ static void ili9341_init_gpio(struct ili9341 *item)
         return;
 }
 
-static void ili9341_free_gpio(void)
-{
-        gpio_free(ILI_GPIO_DC);
-        gpio_free(ILI_GPIO_RESET);
-}
-
 static void ili9341_write_data(struct ili9341 *item, unsigned char dc, unsigned char value)
 {
 
         if (dc == ILI_COMMAND)
         {
-//                gpio_set_value(ILI_GPIO_DC, 0);
                 gpiod_set_value(item->gpio.dc, 0);
                 ili9341_write_spi_1_byte(item, value);
-//                gpio_set_value(ILI_GPIO_DC, 1);
                 gpiod_set_value(item->gpio.dc, 1);
         }
         else
@@ -199,8 +172,8 @@ void ili9341_set_display_res(struct ili9341 *item, int xres, int yres,
         item->info.var.yres_virtual = yres_virtual;
         item->info.var.width = width;
         item->info.var.height = height;
-        item->info.var.bits_per_pixel = 16;
-        item->info.fix.line_length = xres * (item->info.var.bits_per_pixel / 8);
+        item->info.var.color_depth = 2;
+        item->info.fix.line_length = xres * item->info.var.color_depth;
 }
 
 static void ili9341_set_display_options(struct ili9341 *item)
@@ -380,6 +353,8 @@ static int ili9341_init_display(struct ili9341 *item)
 
         ili9341_clear_graph(item);
 
+        gpiod_set_value(item->gpio.led, 1);
+
         printk("COLOR LCD driver initialized\n");
 
         return 0;
@@ -407,24 +382,7 @@ static void ili9341_set_window(struct ili9341 *item, int xs, int ys, int xe, int
         /* Memory write */
         ili9341_write_data(item, ILI_COMMAND, 0x2C);
 
-#if 0
-        for (h = 0; h <= ye - ys; h++) {
-                for (w = 0; w <= xe - xs; w++) {
-                        //Blue
-//			ili9341_write_data(item, ILI_DATA, 0xF8);
-//			ili9341_write_data(item, ILI_DATA, 0x00);
-                        //Grean
-//			ili9341_write_data(item, ILI_DATA, 0x07);
-//			ili9341_write_data(item, ILI_DATA, 0xE0);
-                        //Red
-//			ili9341_write_data(item, ILI_DATA, 0x00);
-//			ili9341_write_data(item, ILI_DATA, 0x1F);
-                        //Black
-                        ili9341_write_data(item, ILI_DATA, 0x00);
-                        ili9341_write_data(item, ILI_DATA, 0x00);
-                }
-        }
-#endif
+        return;
 }
 
 static void ili9341_clear_graph(struct ili9341 *item)
@@ -476,135 +434,153 @@ static void ili9341_video_free(struct ili9341 *item)
 {
         dev_dbg(item->dev, "%s: item=0x%p\n", __func__, (void *)item);
 
-        kfree((void *)item->info.fix.smem_start);
+        vfree((void *)item->info.fix.smem_start);
 }
 
 static void ili9341_flush(struct ili9341 *item)
 {
-#if 0
-  int i, j;
-
-        /* Memory write */
-        ili9341_write_data(item, ILI_COMMAND, 0x2C);
-
-  //Copy all pages.
-  for (i = 0; i < item->pages_count; i++) {
-      if(i == item->pages_count - 1) {
-//        memcpy(item->tmpbuf, item->pages[i].buffer, PAGE_SIZE / 2);
-        for (j = 0; j < PAGE_SIZE / 2; j++) {
-          item->tmpbuf_be[j] = htons(item->tmpbuf[j]);
-        }
-        ili9341_write_spi(item, item->tmpbuf_be, PAGE_SIZE / 2);
-      }
-      else {
-//        memcpy(item->tmpbuf, item->pages[i].buffer, PAGE_SIZE);
-        for (j=0; j<PAGE_SIZE; j++) {
-          item->tmpbuf_be[j] = htons(item->tmpbuf[j]);
-        }
-        ili9341_write_spi(item, item->tmpbuf_be, PAGE_SIZE);
-      }
-  }
-#else
         /* Memory write */
         ili9341_write_data(item, ILI_COMMAND, 0x2C);
         ili9341_write_spi(item, (void *)item->info.fix.smem_start, item->info.fix.smem_len);
-#endif
 }
 
-static void ili9341_fill_screen(struct ili9341 *item)
+static void ili9341_fill_screen(struct ili9341 *item, color_t* color)
 {
-        u16 *mem;
-        u32 length;
+        u16* mem;
+        u16  tmp;
+        u32  len;
         mem = (unsigned short *)item->info.fix.smem_start;
 
-        for (length = item->info.fix.smem_len; length > 0; length -= 2)
+        for (len = item->info.fix.smem_len; len > 0; len -= item->info.var.color_depth)
         {
-                *mem = 0x00F8; // Blue
-                //    *mem = 0xE007; // Green
-                //    *mem = 0x1F00; // Red
+                // BGR565 Big Endian
+                tmp = (color->b >> 3) << 11 | (color->g >> 2) << 5 | color->r >> 3;
+                *mem = (tmp & 0xFF << 8) | tmp >> 8;
                 mem++;
         }
 }
 
-static void ili9341_blt_image(struct ili9341 *item, int x, int y, int w, int h, const u16 *data)
+static void ili9341_blt_image(struct ili9341 *item, pos_t* pos, image_t* image)
 {
         int i, j;
         u16 *mem;
         u16 *src;
 
         mem = (u16 *)item->info.fix.smem_start;
-        mem += (y * item->info.var.xres) + x;
-        src = (u16 *)data;
+        mem += (pos->y * item->info.var.xres) + pos->x;
+        src = image->data;
 
-        for (i = 0; i < h; i++)
+        for (i = 0; i < image->height; i++)
         {
-                for (j = 0; j < w; j++)
+                for (j = 0; j < image->width; j++)
                 {
                         *mem++ = *src++;
                 }
-                mem += item->info.var.xres - w;
+                mem += item->info.var.xres - image->width;
         }
 }
 
-static void ili9341_create_pixel(int x, int y, int s, u8 r, u8 g, u8 b, uint16_t *data, int len)
+static void set_pixel_to_image(pos_t* pos, color_t* color, image_t* image)
 {
         u16 *mem;
-        u16 temp;
+        u16  tmp;
 
-        mem = (u16 *)data;
-        mem += (y * s) + x;
+        mem = image->data;
+        mem += (pos->y * image->width) + pos->x;
 
-        if (data - mem > len)
+        if (image->data - mem > image->width * image->height * image->color_depth)
         {
                 return;
         }
-
-        // BGR565
-        temp = (b >> 3) << 11 | (g >> 2) << 5 | r >> 3;
-        *mem = (temp & 0xFF << 8) | temp >> 8;
+        // BGR565 Big Endian
+        tmp  = (color->b >> 3) << 11 | (color->g >> 2) << 5 | color->r >> 3;
+        *mem = (tmp & 0xFF << 8) | tmp >> 8;
 
         return;
 }
 
-static void ili9341_create_bitmap(uint16_t *data, int len)
+static void ili9341_draw_bitmap(struct ili9341 *item, const bitmap_t *bitmap, int zoom)
 {
-#define BITMAP_X_RES 16
-#define BITMAP_Y_RES 16
-        u8 r, g, b, t;
-        int x, y;
+        u16* data;
+        int  x, y, cx, cy, size, offset;
+        color_t  color;
+        pos_t    pos;
+        image_t  image;
 
-        for (y = 0; y > BITMAP_Y_RES; y++)
-        {
-                for (x = 0; x > BITMAP_X_RES; x++)
-                {
-                        t = sample_bmp_data[y * BITMAP_X_RES + x];
-                        r = sample_color_table[t][0];
-                        g = sample_color_table[t][1];
-                        b = sample_color_table[t][2];
-                        ili9341_create_pixel(x, y, BITMAP_X_RES, r, g, b, data, len);
+        size = (bitmap->width * zoom ) * (bitmap->height * zoom) * item->info.var.color_depth;
+        data = (u16*)vmalloc(size);
+        if (!data) {
+                dev_err(item->dev, "Failed to allocate memory\n");
+                return;
+        }
+        memset(data, 0, size);
+
+        image.width = bitmap->width * zoom;
+        image.height = bitmap->height * zoom;
+        image.color_depth = item->info.var.color_depth;
+        image.data = data;
+
+        for (y = 0; y < image.height ; y++) {
+                for (x = 0; x < image.width; x++) {
+                        cx = x / zoom;
+                        cy = y / zoom;
+                        offset = bitmap->data[cy * bitmap->width + cx];
+                        color = bitmap->color_table[offset];
+                        pos.x = x;
+                        pos.y = y;
+                        set_pixel_to_image(&pos, &color, &image);
                 }
         }
+
+        if (item->cursor.x + image.width > item->info.var.xres) {
+                item->cursor.x = item->indent;
+                item->cursor.y += image.height;
+        }
+        if (item->cursor.y + image.height > item->info.var.yres)
+        {
+                item->cursor.y = 0;
+        }
+
+        pos.x = item->cursor.x;
+        pos.y = item->cursor.y;
+        ili9341_blt_image(item, &pos, &image);
+        item->cursor.x += image.width;
+
+        vfree(data);
+
+        return;
 }
 
-#define BIT(nr) (UL(1) << (nr))
-static void ili9341_puts(struct ili9341 *item, u8 *str)
+static void ili9341_puts(struct ili9341 *item, u8 *str, int zoom)
 {
-#define FONT_WIDTH 8
-#define FONT_HEIGHT 8
-
         uint8_t font_data[FONT_HEIGHT];
-        uint16_t bmp_data[FONT_HEIGHT][FONT_WIDTH];
-        int x, y;
-        int cursor = 0;
-        int line = 0;
+        int  x, y, cx, cy, size;
+        int  char_width, char_height;
         uint8_t *tok;
+        color_t  color;
+        pos_t    pos;
+        image_t  image;
+        u16*     data;
 
-        while (*str != '\0')
-        {
-                if (*str == '\n')
-                {
+        char_width  = FONT_WIDTH * zoom ;
+        char_height = FONT_HEIGHT * zoom ;
+
+        size = char_width * char_height * item->info.var.color_depth;
+        data = (u16*)vmalloc(size);
+        if (!data) {
+                dev_err(item->dev, "Failed to allocate memory\n");
+                return;
+        }
+
+        while (*str != '\0') {
+                if (*str == '\n') {
                         tok = ++str;
-                        line += FONT_HEIGHT;
+                        item->cursor.y += char_width;
+                        item->cursor.x = item->indent;
+                        if(item->cursor.y >= item->info.var.yres)
+                        {
+                                item->cursor.y = 0;
+                        }
                         continue;
                 }
                 tok = ezfont_get_fontdata_by_utf8(str, true, font_data, sizeof(font_data));
@@ -612,27 +588,198 @@ static void ili9341_puts(struct ili9341 *item, u8 *str)
                         break;
                 str = tok;
 
-                memset(bmp_data, 0, sizeof(bmp_data));
-                for (y = 0; y < FONT_HEIGHT; y++)
-                {
-                        for (x = 0; x < FONT_WIDTH; x++)
-                        {
-                                if (font_data[y] & BIT(FONT_WIDTH - 1 - x))
-                                {
-                                        ili9341_create_pixel(
-                                            x, y, FONT_WIDTH, 0xFF, 0xFF, 0xFF, &bmp_data[0][0], sizeof(bmp_data));
+                memset(data, 0, size);
+                image.width = char_width;
+                image.height = char_height;
+                image.color_depth = item->info.var.color_depth;
+                image.data = data;
+
+                for (y = 0; y < char_height; y++) {
+                        for (x = 0; x < char_width; x++) {
+                                cx = x / zoom;
+                                cy = y / zoom;
+                                if (font_data[cy] & BIT(FONT_WIDTH - 1 - cx)) {
+                                        color = white;
+                                        pos.x = x;
+                                        pos.y = y;
+                                        set_pixel_to_image(&pos, &color, &image);
                                 }
                         }
                 }
-                ili9341_blt_image(item, cursor, line, FONT_WIDTH, FONT_HEIGHT, &bmp_data[0][0]);
-                cursor += FONT_WIDTH;
-                if (cursor >= item->info.var.xres)
-                {
-                        cursor = 0;
-                        line += FONT_HEIGHT;
+                ili9341_blt_image(item, &item->cursor, &image);
+                item->cursor.x += char_width;
+                if (item->cursor.x >= item->info.var.xres) {
+                        item->cursor.x = item->indent;
+                        item->cursor.y += char_height;
+                        if(item->cursor.y >= item->info.var.yres)
+                        {
+                                item->cursor.y = 0;
+                        }
+                }
+        }
+        vfree(data);
+
+        return;
+}
+
+static void ili9341_set_cursor(struct ili9341 *item, int x, int y, int indent)
+{
+        if( x >= 0 && x < item->info.var.xres &&
+            y >= 0 && y < item->info.var.yres) {
+                item->cursor.x = x;
+                item->cursor.y = y;
+                if (indent >= 0 && indent < item->info.var.xres ) {
+                        item->indent = indent;
                 }
         }
         return;
+}
+
+static void ili9341_draw_opening(struct ili9341 *item)
+{
+        int i,j;
+
+        ili9341_fill_screen(item, (color_t*)&black);
+
+        // 1st character
+        ili9341_set_cursor(item, 16, 4, 16);
+
+        ili9341_draw_bitmap(item, &corner_lt, 1);
+        for (i = 0; i < 8; i++) {
+                ili9341_draw_bitmap(item, &h_line, 1);
+        }
+        ili9341_draw_bitmap(item, &corner_rt, 1);
+        ili9341_puts(item, "\n", 1);
+
+        for(j = 0; j < 5; j++) {
+                ili9341_draw_bitmap(item, &v_line, 1);
+                for (i = 0; i < 8; i++) {
+                        ili9341_puts(item, " ", 1);
+                }
+                ili9341_draw_bitmap(item, &v_line, 1);
+                ili9341_puts(item, "\n", 1);
+        }
+
+        ili9341_draw_bitmap(item, &corner_lb, 1);
+        for (i = 0; i < 8; i++) {
+                ili9341_draw_bitmap(item, &h_line, 1);
+        }
+        ili9341_draw_bitmap(item, &corner_rb, 1);
+        ili9341_puts(item, "\n", 1);
+
+        ili9341_set_cursor(item, 32,  4, 32);
+        ili9341_puts(item, "　りなくす　\n", 1);
+
+        ili9341_set_cursor(item, 32, 24, 32);
+        ili9341_puts(item, "ＨＰ：９９９\n", 1);
+        ili9341_puts(item, "ＭＰ：９９９\n", 1);
+        ili9341_puts(item, "勇者：　９９\n", 1);
+
+        // 2nd character
+        ili9341_set_cursor(item, 96 , 4, 96);
+
+        ili9341_draw_bitmap(item, &corner_lt, 1);
+        for (i = 0; i < 8; i++) {
+                ili9341_draw_bitmap(item, &h_line, 1);
+        }
+        ili9341_draw_bitmap(item, &corner_rt, 1);
+        ili9341_puts(item, "\n", 1);
+
+        for(j = 0; j < 5; j++) {
+                ili9341_draw_bitmap(item, &v_line, 1);
+                for (i = 0; i < 8; i++) {
+                        ili9341_puts(item, " ", 1);
+                }
+                ili9341_draw_bitmap(item, &v_line, 1);
+                ili9341_puts(item, "\n", 1);
+        }
+
+        ili9341_draw_bitmap(item, &corner_lb, 1);
+        for (i = 0; i < 8; i++) {
+                ili9341_draw_bitmap(item, &h_line, 1);
+        }
+        ili9341_draw_bitmap(item, &corner_rb, 1);
+        ili9341_puts(item, "\n", 1);
+
+        ili9341_set_cursor(item, 96 + 16,  4, 96 + 16);
+        ili9341_puts(item, "　マリベル　\n", 1);
+
+        ili9341_set_cursor(item, 96 + 16, 24, 96 + 16);
+        ili9341_puts(item, "ＨＰ：　１０\n", 1);
+        ili9341_puts(item, "ＭＰ：　１０\n", 1);
+        ili9341_puts(item, "女王：　９９\n", 1);
+
+        #if 0 // for debug
+        ili9341_puts(item, "Hello World!\n", 1);
+        ili9341_puts(item, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~\n", 1);
+        #endif
+
+        ili9341_set_cursor(item, 100, 100, -1);
+        for (i = 0; i < 3; i++)
+        {
+                ili9341_draw_bitmap(item, &slime, 2);
+        }
+
+        ili9341_set_cursor(item, 16, 148, 16);
+        ili9341_draw_bitmap(item, &corner_lt, 1);
+        for (i = 0; i < 32; i++) {
+                ili9341_draw_bitmap(item, &h_line, 1);
+        }
+        ili9341_draw_bitmap(item, &corner_rt, 1);
+        ili9341_puts(item, "\n", 1);
+
+        for(j = 0; j < 8; j++) {
+                ili9341_draw_bitmap(item, &v_line, 1);
+                for (i = 0; i < 32; i++) {
+                        ili9341_puts(item, " ", 1);
+                }
+                ili9341_draw_bitmap(item, &v_line, 1);
+                ili9341_puts(item, "\n", 1);
+        }
+
+        ili9341_draw_bitmap(item, &corner_lb, 1);
+        for (i = 0; i < 32; i++) {
+                ili9341_draw_bitmap(item, &h_line, 1);
+        }
+        ili9341_draw_bitmap(item, &corner_rb, 1);
+        ili9341_puts(item, "\n", 1);
+
+        ili9341_set_cursor(item, 32, 164, 32);
+        ili9341_puts(item, "スライムがあらわれた！\n\n", 1);
+        ili9341_puts(item, "＊「プルプルッ！ぼく、 悪いスライムじゃないよ」\n", 1);
+
+        ili9341_flush(item);
+}
+
+static void ili9341_clear_console(struct ili9341 *item)
+{
+        int i, j;
+
+        ili9341_set_cursor(item, 16 + 8, 148 + 8, 16 + 8);
+        for(j = 0; j < 8; j++) {
+                for (i = 0; i < 32; i++) {
+                        ili9341_puts(item, " ", 1);
+                }
+                ili9341_puts(item, "\n", 1);
+        }
+        return;
+}
+static void ili9341_draw_ending(struct ili9341 *item)
+{
+        ili9341_clear_console(item);
+        ili9341_set_cursor(item, 32, 164, 32);
+        ili9341_puts(item, "りなくすはにげ出した！\n\n", 1);
+        ili9341_puts(item, "マリベル「遊んでくれて、ありがと。つまらなかったわ。\nじゃあね。」\n", 1);
+
+        ili9341_flush(item);
+
+        mdelay(3000);
+
+        ili9341_fill_screen(item, (color_t*)&black);
+        ili9341_flush(item);
+
+        gpiod_set_value(item->gpio.led, 0);
+
 }
 
 static ssize_t ili9341_write(struct file *file, const char __user *buff, size_t count, loff_t *ppos)
@@ -649,17 +796,36 @@ static ssize_t ili9341_read(struct file *file, char __user *buff, size_t count, 
         return 0;
 }
 
+
+static struct ili9341_fix_screeninfo ili9341_fix  = {
+        .line_length = 320 * 2,
+};
+
+static struct ili9341_var_screeninfo ili9341_var  = {
+        .xres           = 320,
+        .yres           = 240,
+        .xres_virtual   = 320,
+        .yres_virtual   = 240,
+        .width          = 320,
+        .height         = 240,
+        .color_depth    = 2,
+};
+
 static const struct file_operations ili9341_fops = {
         .owner = THIS_MODULE,
         .read = ili9341_read,
         .write = ili9341_write,
 };
 
+
+
 static int ili9341_probe(struct spi_device *spi)
 {
         int ret;
         struct ili9341 *item;
         struct device *dev = &spi->dev;
+
+        pr_info("%s: called\n", __func__);
 
         item = devm_kzalloc(&spi->dev, sizeof(struct ili9341), GFP_KERNEL);
         if (!item)
@@ -672,6 +838,9 @@ static int ili9341_probe(struct spi_device *spi)
         item->dev = dev;
         item->spi = spi;
 
+        item->info.fix = ili9341_fix;
+        item->info.var = ili9341_var;
+        
         ret = ili9341_video_alloc(item);
         if (ret)
         {
@@ -696,19 +865,8 @@ static int ili9341_probe(struct spi_device *spi)
 
         ili9341_init_gpio(item);
         ili9341_init_display(item);
-
-        ili9341_fill_screen(item);
-
-        ili9341_puts(item, "Hello World!\n");
-
-        {
-                uint16_t data[16][16];
-                ili9341_create_bitmap(&data[0][0], sizeof(data));
-
-                ili9341_blt_image(item, 0, 100, 16, 16, &data[0][0]);
-        }
-
-        ili9341_flush(item);
+        
+        ili9341_draw_opening(item);
 
         return ret;
 
@@ -721,16 +879,22 @@ out:
 static void ili9341_remove(struct spi_device *spi)
 {
         struct ili9341 *item = spi_get_drvdata(spi);
+
         if (item)
         {
+                ili9341_draw_ending(item);
                 ili9341_video_free(item);
+                misc_deregister(&item->misc_device);
         }
-//      ili9341_free_gpio();
-
-        misc_deregister(&item->misc_device);
 
         return;
 }
+
+static const struct spi_device_id ili9341_spi_id[] = {
+	{"ili9341-spi", 0},
+	{}
+};
+MODULE_DEVICE_TABLE(spi, ili9341_spi_id);
 
 static const struct of_device_id my_of_ids[] = {
         {.compatible = "myboard,ili9341-spi"},
@@ -746,6 +910,7 @@ static struct spi_driver ili9341_spi_driver = {
         },
         .probe = ili9341_probe,
         .remove = ili9341_remove,
+	.id_table = ili9341_spi_id,
 };
 
 static int ili9341_init(void)

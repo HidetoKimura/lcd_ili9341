@@ -16,6 +16,13 @@
 	};
 
 	fragment@1 {
+		target = <&spidev0>;
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@2 {
 		target = <&spi0>;
 		__overlay__ {
 			/* needed to avoid dtc warning */
@@ -30,7 +37,7 @@
 				pinctrl-names = "default";
 				pinctrl-0 = <&lcd_ili9341_pins>;
 
-				reset-gpios = <&gpio 24 1>;
+				reset-gpios = <&gpio 24 0>;
 				dc-gpios = <&gpio 25 0>;
 				led-gpios = <&gpio 18 0>;
 			};
