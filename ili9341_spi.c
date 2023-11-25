@@ -26,6 +26,8 @@
 #define ILI_DATA        0
 #define CONSOLE_BUF_SIZE 512
 
+#define CHAR_COORD(a)  (a * 8)
+
 struct ili9341_fix_screeninfo {
         unsigned long smem_start; /* Start of frame buffer mem  */
         u32 smem_len;             /* Length of frame buffer mem */
@@ -537,11 +539,11 @@ static void ili9341_draw_bitmap(struct ili9341 *item, const bitmap_t *bitmap, in
                 }
         }
 
-        if (item->cursor.x + image.width > item->end_col) {
+        if (item->cursor.x + image.width >= item->end_col) {
                 item->cursor.x = item->start_col;
                 item->cursor.y += image.height;
         }
-        if (item->cursor.y + image.height > item->end_line)
+        if (item->cursor.y + image.height >= item->end_line)
         {
                 item->cursor.y = item->start_line;
         }
@@ -559,13 +561,17 @@ static void ili9341_draw_bitmap(struct ili9341 *item, const bitmap_t *bitmap, in
 static void ili9341_puts(struct ili9341 *item, u8 *str, int zoom)
 {
         uint8_t font_data[FONT_HEIGHT];
+        uint8_t tmp;
         int  x, y, cx, cy, size;
         int  char_width, char_height;
+        int  font_width;
+        bool han = false;
         uint8_t *tok;
         color_t  color;
         pos_t    pos;
         image_t  image;
         u16*     data;
+
 
         char_width  = FONT_WIDTH * zoom ;
         char_height = FONT_HEIGHT * zoom ;
@@ -580,15 +586,24 @@ static void ili9341_puts(struct ili9341 *item, u8 *str, int zoom)
         while (*str != '\0') {
                 if (*str == '\n') {
                         tok = ++str;
-                        item->cursor.y += char_width;
+                        item->cursor.y += char_height;
                         item->cursor.x = item->start_col;
-                        if(item->cursor.y >= item->end_col)
+                        if(item->cursor.y >= item->end_line)
                         {
                                 item->cursor.y = item->start_line;
                         }
                         continue;
                 }
-                tok = ezfont_get_fontdata_by_utf8(str, true, font_data, sizeof(font_data));
+                if(*str < 0x7f) {
+                        han = true;
+                        font_width = FONT_WIDTH / 2;
+                        char_width = font_width * zoom;
+                } else {
+                        han = false;
+                        font_width = FONT_WIDTH;
+                        char_width = font_width * zoom;
+                }
+                tok = ezfont_get_fontdata_by_utf8(str, false, font_data, sizeof(font_data));
                 if (tok == NULL)
                         break;
                 str = tok;
@@ -603,7 +618,13 @@ static void ili9341_puts(struct ili9341 *item, u8 *str, int zoom)
                         for (x = 0; x < char_width; x++) {
                                 cx = x / zoom;
                                 cy = y / zoom;
-                                if (font_data[cy] & BIT(FONT_WIDTH - 1 - cx)) {
+                                if (han) {
+                                        tmp = font_data[cy] & 0xf0;
+                                        tmp >>= 4;
+                                } else {
+                                        tmp = font_data[cy];
+                                }
+                                if (tmp & BIT(font_width - 1 - cx)) {
                                         color = white;
                                         pos.x = x;
                                         pos.y = y;
@@ -679,7 +700,7 @@ static void ili9341_draw_opening(struct ili9341 *item)
         ili9341_fill_screen(item, (color_t*)&black);
 
         // 1st character
-        ili9341_set_cursor(item, 16, 4);
+        ili9341_set_cursor(item, CHAR_COORD(2), CHAR_COORD(1));
 
         ili9341_draw_bitmap(item, &corner_lt, 1);
         for (i = 0; i < 8; i++) {
@@ -691,7 +712,7 @@ static void ili9341_draw_opening(struct ili9341 *item)
         for(j = 0; j < 5; j++) {
                 ili9341_draw_bitmap(item, &v_line, 1);
                 for (i = 0; i < 8; i++) {
-                        ili9341_puts(item, " ", 1);
+                        ili9341_puts(item, "　", 1);
                 }
                 ili9341_draw_bitmap(item, &v_line, 1);
                 ili9341_puts(item, "\n", 1);
@@ -704,16 +725,16 @@ static void ili9341_draw_opening(struct ili9341 *item)
         ili9341_draw_bitmap(item, &corner_rb, 1);
         ili9341_puts(item, "\n", 1);
 
-        ili9341_set_cursor(item, 32,  4);
+        ili9341_set_cursor(item, CHAR_COORD(4),  CHAR_COORD(1));
         ili9341_puts(item, "　りなくす　\n", 1);
 
-        ili9341_set_cursor(item, 32, 24);
+        ili9341_set_cursor(item, CHAR_COORD(4), CHAR_COORD(3));
         ili9341_puts(item, "ＨＰ：９９９\n", 1);
         ili9341_puts(item, "ＭＰ：９９９\n", 1);
         ili9341_puts(item, "勇者：　９９\n", 1);
 
         // 2nd character
-        ili9341_set_cursor(item, 96, 4);
+        ili9341_set_cursor(item, CHAR_COORD(12), CHAR_COORD(1));
 
         ili9341_draw_bitmap(item, &corner_lt, 1);
         for (i = 0; i < 8; i++) {
@@ -725,7 +746,7 @@ static void ili9341_draw_opening(struct ili9341 *item)
         for(j = 0; j < 5; j++) {
                 ili9341_draw_bitmap(item, &v_line, 1);
                 for (i = 0; i < 8; i++) {
-                        ili9341_puts(item, " ", 1);
+                        ili9341_puts(item, "　", 1);
                 }
                 ili9341_draw_bitmap(item, &v_line, 1);
                 ili9341_puts(item, "\n", 1);
@@ -738,11 +759,11 @@ static void ili9341_draw_opening(struct ili9341 *item)
         ili9341_draw_bitmap(item, &corner_rb, 1);
         ili9341_puts(item, "\n", 1);
 
-        ili9341_set_cursor(item, 96 + 16,  4);
+        ili9341_set_cursor(item, CHAR_COORD(14),  CHAR_COORD(1));
 
         ili9341_puts(item, "　マリベル　\n", 1);
 
-        ili9341_set_cursor(item, 96 + 16, 24);
+        ili9341_set_cursor(item, CHAR_COORD(14), CHAR_COORD(3));
 
         ili9341_puts(item, "ＨＰ：　１０\n", 1);
         ili9341_puts(item, "ＭＰ：　１０\n", 1);
@@ -753,13 +774,13 @@ static void ili9341_draw_opening(struct ili9341 *item)
         ili9341_puts(item, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~\n", 1);
         #endif
 
-        ili9341_set_cursor(item, 100, 100);
+        ili9341_set_cursor(item, CHAR_COORD(20) - CHAR_COORD(6), CHAR_COORD(12));
         for (i = 0; i < 3; i++)
         {
                 ili9341_draw_bitmap(item, &slime, 2);
         }
 
-        ili9341_set_cursor(item, 16, 148);
+        ili9341_set_cursor(item, CHAR_COORD(2), CHAR_COORD(18));
 
         ili9341_draw_bitmap(item, &corner_lt, 1);
         for (i = 0; i < 34; i++) {
@@ -771,7 +792,7 @@ static void ili9341_draw_opening(struct ili9341 *item)
         for(j = 0; j < 8; j++) {
                 ili9341_draw_bitmap(item, &v_line, 1);
                 for (i = 0; i < 34; i++) {
-                        ili9341_puts(item, " ", 1);
+                        ili9341_puts(item, "　", 1);
                 }
                 ili9341_draw_bitmap(item, &v_line, 1);
                 ili9341_puts(item, "\n", 1);
@@ -784,8 +805,8 @@ static void ili9341_draw_opening(struct ili9341 *item)
         ili9341_draw_bitmap(item, &corner_rb, 1);
         ili9341_puts(item, "\n", 1);
 
-        ili9341_set_cursor(item, 32, 164);
-        ili9341_set_limit(item,  32, 32 + 8 * 32, 164, 164 + 8 * 6);
+        ili9341_set_cursor(item, CHAR_COORD(4), CHAR_COORD(20));
+        ili9341_set_limit(item,  CHAR_COORD(4), CHAR_COORD(36), CHAR_COORD(20), CHAR_COORD(26));
 
         ili9341_puts(item, "スライムがあらわれた！\n\n", 1);
         ili9341_puts(item, "＊「プルプルッ！ぼく、 悪いスライムじゃないよ」\n", 1);
@@ -797,15 +818,15 @@ static void ili9341_clear_console(struct ili9341 *item)
 {
         int i, j;
 
-        ili9341_set_cursor(item, 32, 164);
-        for(j = 0; j < 6; j++) {
-                for (i = 0; i < 32; i++) {
-                        ili9341_puts(item, " ", 1);
+        ili9341_set_cursor(item, CHAR_COORD(3), CHAR_COORD(19));
+        for(j = 0; j < 8; j++) {
+                for (i = 0; i < 34; i++) {
+                        ili9341_puts(item, "　", 1);
                 }
                 ili9341_puts(item, "\n", 1);
         }
-        ili9341_set_cursor(item, 32, 164);
-        ili9341_set_limit(item,  32, 32 + 8 * 32, 164, 164 + 8 * 6);
+        ili9341_set_cursor(item, CHAR_COORD(4), CHAR_COORD(20));
+        ili9341_set_limit(item,  CHAR_COORD(4), CHAR_COORD(36), CHAR_COORD(20), CHAR_COORD(26));
         return;
 }
 static void ili9341_draw_ending(struct ili9341 *item)
