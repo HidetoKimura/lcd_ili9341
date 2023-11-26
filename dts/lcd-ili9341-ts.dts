@@ -1,0 +1,92 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2835";
+
+	fragment@0 {
+		target = <&gpio>;
+		__overlay__ {
+			lcd_ili9341_pins: lcd_ili9341_pins {
+				brcm,pins = <18 24 25 26>;  /* led rst dc  irq */
+				brcm,function = <1 1 1 0>;  /* out out out in  */
+				brcm,pull = <0 0 0 2>;      /* -   -   -   up  */
+			};
+			spi1_pins: spi1_pins {
+				brcm,pins = <19 20 21>;
+				brcm,function = <3>; /* alt4 */
+			};
+			spi1_cs_pins: spi1_cs_pins {
+				brcm,pins = <16>;
+				brcm,function = <1>; /* output */
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&spidev0>;
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@2 {
+		target = <&spidev1>;
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@3 {
+		target = <&spi0>;
+		__overlay__ {
+			/* needed to avoid dtc warning */
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			status = "okay";
+
+			lcd_ili9341: lcd_ili9341@0{
+				compatible = "myboard,ili9341-spi";
+				reg = <0>;
+				pinctrl-names = "default";
+				pinctrl-0 = <&lcd_ili9341_pins>;
+
+				reset-gpios = <&gpio 24 0>;
+				dc-gpios = <&gpio 25 0>;
+				led-gpios = <&gpio 18 0>;
+			};
+		};
+	};
+
+	fragment@4 {
+		target = <&spi1>;
+		__overlay__ {
+			/* needed to avoid dtc warning */
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			pinctrl-names = "default";
+			pinctrl-0 = <&spi1_pins &spi1_cs_pins>;
+			cs-gpios = <&gpio 16 1>;
+
+			lcd_ili9341_ts: lcd-ili9341-ts@0 {
+				compatible = "myboard,ili9341-ts";
+				reg = <0>;
+				interrupts = <26 2>; /* high-to-low edge triggered */
+				interrupt-parent = <&gpio>;
+				pendown-gpio = <&gpio 26 1>;
+			};
+		};
+	};
+
+	fragment@5 {
+		target = <&aux>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+};
+
+
